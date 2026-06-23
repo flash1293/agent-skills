@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.3.1
+
+### Updated Skills
+
+- `skills/elasticsearch/elasticsearch-esql` (v0.3.0 → v0.4.0)
+
+### Generated Artifacts
+
+- Regenerated README skill table
+
 ## v0.3.0
 
 ### New Skills

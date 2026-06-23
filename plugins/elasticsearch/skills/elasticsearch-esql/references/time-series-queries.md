@@ -88,6 +88,12 @@ TS metrics | STATS AVG(memory_usage)
 TS metrics | STATS AVG(LAST_OVER_TIME(memory_usage))
 ```
 
+**When to use `*_OVER_TIME` vs plain aggregations for gauges:** For simple gauge queries (average CPU, max memory),
+prefer `AVG(cpu)` over `AVG(AVG_OVER_TIME(cpu))` — the implicit `LAST_OVER_TIME` is sufficient and produces cleaner
+queries. Use explicit `*_OVER_TIME` only when you need a specific window behavior: `AVG_OVER_TIME` to average all
+samples (not just the last), `MIN_OVER_TIME`/`MAX_OVER_TIME` to find extremes within each time series before
+aggregating, or `DELTA`/`DERIV` to compute changes. When in doubt, omit the inner function.
+
 Since 9.3 (preview), use a time series function directly without an outer aggregation to get one value per time series
 per bucket. The result is implicitly grouped by all dimensions of each time series and includes a `_timeseries` column
 with the dimension key/value pairs — see [WITHOUT Grouping Function](#without-grouping-function) for narrowing this
@@ -164,11 +170,11 @@ For gauge metrics and general numeric fields (`double`, `integer`, `long`, `aggr
 | `DERIV`                    | Derivative over time using linear regression       | 9.3 (preview) | GA (9.4) |
 
 ```esql
-// Average memory per cluster per 5 minutes
+// Average memory per cluster per 5 minutes (plain form — implicit LAST_OVER_TIME is sufficient for gauges)
 // cluster is a dimension of the TSDS index metrics
 TS metrics
 | WHERE TRANGE(1 day)
-| STATS AVG(AVG_OVER_TIME(memory_usage)) BY cluster, TBUCKET(5 minute)
+| STATS AVG(memory_usage) BY cluster, TBUCKET(5 minute)
 
 // P95 network cost per cluster per minute
 // k8s is an example of a TSDS index, to showcase that time series indexes do not have to be called metrics
@@ -245,15 +251,18 @@ The interval is a time duration (`1 hour`, `5 minute`, `30s`) or date period (`1
 
 **Availability:** Preview from 9.2 to 9.3, **GA since 9.4**.
 
-```esql
-// 1-hour buckets
-TS metrics
-| STATS SUM(RATE(requests)) BY TBUCKET(1 hour), host
+Always assign a column alias to `TBUCKET` so it can be referenced in `SORT`:
 
-// 5-minute buckets
-// service is a dimension of the TSDS index metrics in this example
+```esql
+// 1-hour buckets — alias enables SORT
 TS metrics
-| STATS AVG(AVG_OVER_TIME(cpu_percent)) BY TBUCKET(5 minute), service
+| STATS rate = SUM(RATE(requests)) BY bucket = TBUCKET(1 hour), host
+| SORT bucket, host
+
+// 5-minute buckets (plain form for gauge)
+TS metrics
+| STATS avg_cpu = AVG(cpu_percent) BY bucket = TBUCKET(5 minute), service
+| SORT bucket
 ```
 
 ---
@@ -519,19 +528,20 @@ TS metrics
 ### Average Gauge per Cluster Over Time
 
 ```esql
+// Plain form — preferred for gauge metrics
 TS metrics
 | WHERE TRANGE(1 day)
-| STATS AVG(AVG_OVER_TIME(memory_usage)) BY TBUCKET(5 minute), cluster
+| STATS AVG(memory_usage) BY TBUCKET(5 minute), cluster
 ```
 
 ### Per-Time-Series Averages vs Global Average
 
 ```esql
-// Average of per-time-series averages (accounts for different series lengths)
-TS metrics | STATS AVG(AVG_OVER_TIME(memory_usage))
-
-// Average of last values per time series (default behavior)
+// Average of last values per time series (default — preferred for most gauge queries)
 TS metrics | STATS AVG(memory_usage)
+
+// Average of ALL samples per time series (use AVG_OVER_TIME only when you need this distinction)
+TS metrics | STATS AVG(AVG_OVER_TIME(memory_usage))
 ```
 
 ### Detect Missing Data

@@ -6,7 +6,7 @@ description: >
   charts and dashboards from ES|QL results.
 metadata:
   author: elastic
-  version: 0.3.0
+  version: 0.4.0
 ---
 
 # Elasticsearch ES|QL
@@ -39,7 +39,7 @@ ES|QL uses pipes (`|`) to chain commands:
 >   development (next minor from main), so clients that only semver-compare may treat Serverless as “latest.” **Do not**
 >   use `version.number` to gate features: if `build_flavor` is `"serverless"`, assume all GA and preview ES|QL features
 >   are available.
-> - `build_flavor: "default"` — Self-managed or Elastic Cloud Hosted. Use `version.number` for feature availability.
+> - `build_flavor: "default"` — Stack (self-managed or Cloud-hosted). Use `version.number` for feature availability.
 > - **Snapshot builds** have `version.number` like `9.4.0-SNAPSHOT`. Strip the `-SNAPSHOT` suffix and use the
 >   major.minor for version checks. Snapshot builds include all features from that version plus potentially unreleased
 >   features from development — if a query fails with an unknown function/command, it may simply not have landed yet.
