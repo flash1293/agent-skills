@@ -40,9 +40,6 @@ Builder access is a hard prerequisite, not optional.
 - **Significant event** — a triaged, human-facing incident synthesized by the Discovery pipeline from one or more
   firing queries. Has a lifecycle: `promoted` → `acknowledged` or `demoted` → `resolved`. `demoted` means triage
   decided it's not real; `resolved` means it was real and is now handled.
-- Both KIs and significant events are **append-only revision logs**, not overwritten-in-place documents — every
-  update or delete writes a new revision. "Current state" always means the latest non-deleted revision per logical
-  entity.
 
 ## Task selector
 
@@ -134,13 +131,6 @@ curl -G "${KIBANA_URL}/api/streams/<stream-name>/significant_events" \
   --data-urlencode "bucketSize=1h"
 ```
 
-For deeper debugging — e.g. cross-stream ES|QL aggregation the tools don't expose — KIs and significant events are
-also backed by plain (if `hidden: true`) data streams (`.significant_events-knowledge_indicators`,
-`.significant_events-events`) and, for `alerting_v2` occurrence counts, `.rule-events`. Field reference and the
-"latest revision" `INLINE STATS` query Kibana's own readers use internally (both are append-only revision logs, not
-overwritten-in-place documents): [references/data-model-and-esql.md](references/data-model-and-esql.md). This is
-background/debugging material, not a substitute for the tools above.
-
 ## Examples
 
 ### "What's currently open for triage?"
@@ -188,6 +178,3 @@ curl -X POST "${KIBANA_URL}/api/agent_builder/tools/_execute" \
   was real and has been handled. Don't resolve something that should be demoted, or vice versa.
 - **Prefer semantic search.** `ki_search`'s `search_text` does hybrid keyword+vector ranking — a descriptive phrase
   ("pods failing to pull images") beats a bare keyword.
-- **This skill requires Agent Builder access.** Don't reach for raw ES|QL against the backing indices as a routine
-  substitute — it skips the tools' semantic search and duplicate protection. Reserve it for genuine debugging (see
-  [Also available](#also-available)).
