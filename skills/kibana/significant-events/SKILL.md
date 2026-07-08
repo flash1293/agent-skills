@@ -2,19 +2,17 @@
 name: kibana-significant-events
 description: >
   Search, triage, and manage Significant Events and Knowledge Indicators (KIs) on
-  Kibana Streams — via the native Agent Builder tools (`platform.sig_events.*`), the
-  per-stream Streams REST API, or raw ES|QL against the underlying
-  `.significant_events-*` and `.rule-events` indices when Agent Builder access isn't
-  available. Use when the user asks about significant events or SigEvents, wants to
-  see what's currently promoted/acknowledged/open, wants to search or create
-  Knowledge Indicators (feature or query KIs) for a stream, needs to
+  Kibana Streams via the native Agent Builder tools (`platform.sig_events.*`). Use
+  when the user asks about significant events or SigEvents, wants to see what's
+  currently promoted/acknowledged/open, wants to search or create Knowledge
+  Indicators (feature or query KIs) for a stream, needs to
   promote/acknowledge/demote/resolve an event, or wants a stream's SigEvent
   occurrence trend.
 metadata:
   author: elastic
   version: 0.1.0
-compatibility: Kibana 9.1+ (`streams` + `significant_events` plugins); the native tool
-  path additionally requires Agent Builder 9.2+
+compatibility: Kibana 9.1+ (`streams` + `significant_events` plugins) with Agent
+  Builder 9.2+
 ---
 
 # Kibana Significant Events
@@ -24,10 +22,9 @@ stream fire, get correlated by a Discovery agent, and surface as triaged **signi
 act on. Knowledge Indicators (KIs) are the supporting context — durable facts about a stream (**feature** KIs, e.g.
 detected technologies/dependencies) and the detection queries themselves (**query** KIs, the SigEvent definitions).
 
-This skill covers three ways to read and manage this data, in preference order: native **Agent Builder tools**
-(richest, includes triage state), the per-stream **Streams REST API** (public but deprecated, definitions +
-occurrence counts only), and raw **ES|QL** against the backing indices (works with no Agent Builder access, but you
-own the "latest revision" reduction yourself).
+This skill relies on the native **Agent Builder tools** built into Kibana's `significant_events` plugin — they cover
+search, triage, and creation for both KIs and significant events, and are the only supported path here. Agent Builder
+access is a hard prerequisite, not optional.
 
 ## Concepts
 
@@ -42,9 +39,9 @@ own the "latest revision" reduction yourself).
   update or delete writes a new revision. "Current state" always means the latest non-deleted revision per logical
   entity.
 
-## Method selector
+## Task selector
 
-| Task                                                            | Method                                                                  |
+| Task                                                            | Tool                                                                    |
 | ---------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | Search KIs (feature and/or query) for one or more streams        | `platform.sig_events.ki_search`                                        |
 | See what significant events are currently open/promoted          | `platform.sig_events.event_search`                                     |
@@ -52,8 +49,7 @@ own the "latest revision" reduction yourself).
 | Save a newly-discovered stream fact as a KI                       | `platform.sig_events.ki_feature_create`                                |
 | Promote/acknowledge/demote/resolve, or create a new event         | `platform.sig_events.event_create` / `event_status_update`             |
 | Record an investigation run against an event                     | `platform.streams.sig_events.event_investigation_attach`               |
-| Read one known stream's SigEvent definitions + occurrence trend   | Streams REST API — `GET /api/streams/{name}/significant_events`        |
-| No Agent Builder tool/MCP access at all                          | Raw ES|QL fallback (see below)                                          |
+| Read one known stream's SigEvent definitions + occurrence trend   | Streams REST API — `GET /api/streams/{name}/significant_events` (see [Also available](#also-available)) |
 
 ## Prerequisites
 
@@ -61,9 +57,9 @@ own the "latest revision" reduction yourself).
 | ------------------- | ------------------------------------------------------------------------------------------ |
 | **Kibana URL**      | Kibana endpoint (e.g. `https://localhost:5601` or a Cloud deployment URL)                 |
 | **Authentication**  | API key or basic auth (see the `elasticsearch-authn` skill)                               |
-| **Privileges**      | `read_stream` (read) / `manage_stream` (KI writes) for the target streams; read access to Agent Builder for the tool path |
+| **Agent Builder access** | Required — this skill relies entirely on the native `platform.sig_events.*` tools; read access to Agent Builder plus `read_stream` (read) / `manage_stream` (KI writes) for the target streams |
 
-## Method 1: Agent Builder tools (preferred)
+## Using the tools
 
 These tools are built into Kibana's `significant_events` plugin (namespace `platform.sig_events.*` plus
 `platform.streams.sig_events.event_investigation_attach`) — no setup or registration needed, unlike custom Agent
@@ -110,10 +106,11 @@ use the dotted id (`platform.sig_events.ki_search`). List everything available f
 
 Full JSON Schemas for every tool: [references/tool-schemas.md](references/tool-schemas.md).
 
-## Method 2: Streams REST API (per-stream, deprecated)
+## Also available
 
 If you already know the stream name and only need its SigEvent definitions plus their firing-rate time series (not
-feature KIs, not triaged event instances), the public (though deprecated) Streams endpoint does the join for you:
+feature KIs, not triaged event instances), the public (though deprecated) Streams endpoint does that one join for
+you — see the `kibana-streams` skill for this and the rest of the Streams API surface:
 
 ```bash
 curl -G "${KIBANA_URL}/api/streams/<stream-name>/significant_events" \
@@ -123,46 +120,12 @@ curl -G "${KIBANA_URL}/api/streams/<stream-name>/significant_events" \
   --data-urlencode "bucketSize=1h"
 ```
 
-Returns `{ queries: [...with occurrences[]...], aggregated_occurrences: [...] }`. See the `kibana-streams` skill for
-the rest of the Streams API surface (stream lifecycle, ingest/query settings, attachments).
-
-## Method 3: Raw ES|QL fallback (no Agent Builder access)
-
-KIs and significant events both live in **hidden** data streams — reference them by exact name, not a wildcard
-pattern, and add `METADATA _id, _source` plus `KEEP _source` to get the full document (most of the interesting
-fields, like `root_cause`, `criticality`, `dependency_edges`, and `feature.properties`, aren't in the explicit
-mapping and won't come back as named columns).
-
-Because both are append-only revision logs, reduce to the latest non-deleted revision per logical entity yourself
-with a two-stage `INLINE STATS` (this is the exact pattern Kibana's own reader uses internally):
-
-```esql
-FROM .significant_events-knowledge_indicators METADATA _id, _source
-| WHERE deleted IS NULL OR deleted == false
-| WHERE excluded IS NULL OR excluded == false
-| INLINE STATS latest_ts = MAX(@timestamp) BY `stream.name`, type, id
-| WHERE @timestamp == latest_ts
-| INLINE STATS tiebreaker_id = MAX(_id) BY `stream.name`, type, id
-| WHERE _id == tiebreaker_id
-| KEEP _source
-| LIMIT 500
-```
-
-```esql
-FROM .significant_events-events METADATA _id, _source
-| INLINE STATS latest_ts = MAX(@timestamp) BY discovery_slug
-| WHERE @timestamp == latest_ts
-| INLINE STATS tiebreaker_id = MAX(_id) BY discovery_slug
-| WHERE _id == tiebreaker_id
-| KEEP _source
-| LIMIT 500
-```
-
-Both queries were validated against a live cluster and returned counts matching `ki_search`/`event_search` exactly.
-SigEvent **occurrence counts** (firing time series) are a separate concern — they come from alerts, not these
-indices; for `alerting_v2`-based deployments they land in `.rule-events` keyed by `rule.id`. Full field reference,
-the occurrence-count query, and the `deleted`/`excluded`/`expires_at` semantics:
-[references/data-model-and-esql.md](references/data-model-and-esql.md).
+For deeper debugging — e.g. cross-stream ES|QL aggregation the tools don't expose — KIs and significant events are
+also backed by plain (if `hidden: true`) data streams (`.significant_events-knowledge_indicators`,
+`.significant_events-events`) and, for `alerting_v2` occurrence counts, `.rule-events`. Field reference and the
+"latest revision" `INLINE STATS` query Kibana's own readers use internally (both are append-only revision logs, not
+overwritten-in-place documents): [references/data-model-and-esql.md](references/data-model-and-esql.md). This is
+background/debugging material, not a substitute for the tools above.
 
 ## Examples
 
@@ -195,11 +158,6 @@ curl -X POST "${KIBANA_URL}/api/agent_builder/tools/_execute" \
 1. `event_search` (or use the `event_id` already in hand) to confirm the event and its current status.
 2. Confirm with the user, then `event_status_update` with `status: "demoted"`.
 
-### No Agent Builder access — just show me the KIs
-
-Run the Method 3 reduction query for `.significant_events-knowledge_indicators`, add `| WHERE type == "feature"`
-before the `INLINE STATS` stages, decode each row's `_source`, and present the same shape `ki_search` would return.
-
 ## Guidelines
 
 - **Search before you create.** Always run `ki_search` / `event_search` first — creating a duplicate KI or event for
@@ -213,9 +171,6 @@ before the `INLINE STATS` stages, decode each row's `_source`, and present the s
   was real and has been handled. Don't resolve something that should be demoted, or vice versa.
 - **Prefer semantic search.** `ki_search`'s `search_text` does hybrid keyword+vector ranking — a descriptive phrase
   ("pods failing to pull images") beats a bare keyword.
-- **Only fall back to raw ES|QL when you must.** It requires the latest-revision reduction above, doesn't give you
-  the tools' semantic search, and won't stop you from writing a duplicate — prefer Method 1 whenever Agent Builder
-  access is available.
-- **Reference indices by exact name, not wildcard.** `.significant_events-knowledge_indicators`,
-  `.significant_events-events`, and `.rule-events` are all `hidden: true` — a `*` pattern in `list_indices` or
-  `_resolve` won't surface them.
+- **This skill requires Agent Builder access.** Don't reach for raw ES|QL against the backing indices as a routine
+  substitute — it skips the tools' semantic search and duplicate protection. Reserve it for genuine debugging (see
+  [Also available](#also-available)).
